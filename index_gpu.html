@@ -1,0 +1,609 @@
+
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - render-to-texture</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				color: #ffffff;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				font-weight: bold;
+				background-color: #000000;
+				margin: 0px;
+				overflow: hidden;
+			}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				padding: 5px;
+			}
+
+			a {
+				color: #ffffff;
+			}
+
+		</style>
+	</head>
+	<body>
+
+		<div id="container"></div>
+		
+		<script src="three.min.js"></script>
+
+		<script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script>
+
+		<script id="debug_shader" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D U;
+
+			void main() {
+				if(texture2D( U, vUv ).x > 0.24)
+					gl_FragColor = vec4(0.0,1.0,1.0,0.0);
+				else gl_FragColor = vec4(1.0,0.0,0.0,0.0);
+			}
+
+		</script>
+
+		<script id="init_boundary_shader" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D U;
+
+			void main() {
+				gl_FragColor = vec4(0.75,0.0,0.0,0.0);
+			}
+
+		</script>
+
+		<script id="init_inner_shader" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D U;
+
+			void main() {
+				if(vUv.x > 0.25 && vUv.x < 0.75 && vUv.y > 0.25 && vUv.y < 0.75)
+					gl_FragColor = vec4(0.25,0.0,0.0,0.0);
+				else gl_FragColor = vec4(0.0,0.0,0.0,0.0);
+				
+			}
+
+		</script>
+
+		<script id="init_x_shader" type="x-shader/x-fragment">
+			varying vec2 vUv;
+			uniform sampler2D U;
+
+			void main() {
+				if(vUv.x > 0.5)
+					gl_FragColor = vec4(1.0,0.0,0.0,0.0);
+				else
+					gl_FragColor = vec4(0.0,0.0,0.0,0.0);
+			}
+
+		</script>
+
+		<script id="advect_shader" type="x-shader/x-fragment">
+
+			uniform float fWidth;
+			uniform float fHeight;
+			uniform float timeStep;
+			varying vec2 vUv;
+			uniform sampler2D U;
+			uniform sampler2D X;
+
+			// Function to get interpolated texel data from a texture with GL_NEAREST property.
+			// Bi-Linear interpolation is implemented in this function with the 
+			// help of nearest four data.
+			vec4 tex2DBiLinear( sampler2D textureSampler_i, vec2 texCoord_i )
+			{
+				float texelSizeX = 1.0 / fWidth; //size of one texel 
+    			float texelSizeY = 1.0 / fHeight; //size of one texel
+
+    			vec4 p0q0 = texture2D(textureSampler_i, texCoord_i);
+    			vec4 p1q0 = texture2D(textureSampler_i, texCoord_i + vec2(texelSizeX, 0));
+
+ 			   	vec4 p0q1 = texture2D(textureSampler_i, texCoord_i + vec2(0, texelSizeY));
+			    vec4 p1q1 = texture2D(textureSampler_i, texCoord_i + vec2(texelSizeX , texelSizeY));
+
+    			float a = fract( texCoord_i.x * fWidth ); // Get Interpolation factor for X direction.
+															// Fraction near to valid data.
+
+    			vec4 pInterp_q0 = mix( p0q0, p1q0, a ); // Interpolates top row in X direction.
+    			vec4 pInterp_q1 = mix( p0q1, p1q1, a ); // Interpolates bottom row in X direction.
+
+    			float b = fract( texCoord_i.y * fHeight );// Get Interpolation factor for Y direction.
+    			return mix( pInterp_q0, pInterp_q1, b ); // Interpolate in Y direction.
+			}	
+
+			vec2 tow(vec2 W)
+			{
+				return (W + vec2(2.0,2.0))/4.0;
+			}
+
+			vec2 toW(vec2 w)
+			{
+				return w*4.0 - vec2(2.0,2.0);
+			}	
+
+			void main() {
+
+				vec2 rdx = vec2(1.0/fWidth, 1.0/fHeight);
+				vec2 pos = vUv - timeStep * toW(texture2D( U, vUv ).xy);
+
+				gl_FragColor = vec4(tex2DBiLinear(X, pos).xy,0,0);
+			}
+
+		</script>
+
+		<script id="fragment_shader_screen" type="x-shader/x-fragment">
+
+			varying vec2 vUv;
+			uniform sampler2D tDiffuse;
+
+			void main() {
+
+				gl_FragColor = texture2D( tDiffuse, vUv );
+
+			}
+
+		</script>
+
+		<script id="fragment_shader_pass_1" type="x-shader/x-fragment">
+
+			varying vec2 vUv;
+			uniform float time;
+
+			void main() {
+
+				float r = vUv.x;
+				if( vUv.y < 0.5 ) r = 0.0;
+				float g = vUv.y;
+				if( vUv.x < 0.5 ) g = 0.0;
+
+				gl_FragColor = vec4( r, g, time, 1.0 );
+
+			}
+
+		</script>
+
+		<script id="vertexShader" type="x-shader/x-vertex">
+
+			varying vec2 vUv;
+
+			void main() {
+
+				vUv = uv;
+				gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+
+			}
+
+		</script>
+
+
+		<script>
+
+			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			var container, stats, oldTime;
+
+			var cameraRTT, camera, sceneRTT, sceneScreen, scene, boundaryScene, renderer, zmesh1, zmesh2;
+
+			var mouseX = 0, mouseY = 0;
+
+			var _WIDTH = 512;//window.innerWidth;
+			var _HEIGHT = 512;//window.innerHeight;
+
+			var windowHalfX = _WIDTH / 2;
+			var windowHalfY = _HEIGHT / 2;
+
+			var rtTexture, material, quad;
+
+			var delta = 0.01;
+
+
+			// FRAME BUFFERS
+			var rtTextures = [], xTextures = [];
+			// SCENE
+			var scene, fullScene;
+			var quad, innerQuad, boundary;
+			// MATERIALS
+			var debugMaterial, initMaterial, initXMaterial, initBoundaryMaterial, boundaryMaterial, materialScreen,
+					advectionMaterial, diffusionMaterial;
+
+
+			init();
+			animate();
+
+			function initialize ( xTex, bTex, outTex ){
+
+				renderer.clear();
+
+				initMaterial.uniforms.U.value = bTex;
+				quad.material = initMaterial;
+				renderer.render( fullScene, cameraRTT, outTex, true );
+
+				for(var i = 0; i < boundary.length; i++)
+					boundary[i].material =  initBoundaryMaterial;
+				initXMaterial.uniforms.U.value = xTex; 
+				innerQuad.material = initXMaterial;
+				renderer.render( scene, cameraRTT, xTex, true );
+/*
+				initBoundaryMaterial.uniforms.U.value = outTex;
+				for(var i = 0; i < 4; i++)
+					boundary[i].material = initBoundaryMaterial;
+				renderer.render( boundaryScene, cameraRTT, outTex, true );
+		*/
+			}
+
+			function init() {
+				container = document.getElementById( 'container' );
+
+				// FRAME BUFFERS
+				rtTextures.push(new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } ));
+				rtTextures.push(new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } ));
+				rtTextures.push(new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } ));
+
+				xTextures.push(new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } ));
+				xTextures.push(new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } ));
+
+				// MATERIALS
+				debugMaterial = new THREE.ShaderMaterial( {
+					uniforms: { U: { type: "t", value: rtTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'debug_shader' ).textContent,
+
+					depthWrite: false
+				} );
+
+				initMaterial = new THREE.ShaderMaterial( {
+					uniforms: { U: { type: "t", value: rtTextures[1] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'init_inner_shader' ).textContent,
+
+					depthWrite: false
+				} );
+
+				initXMaterial = new THREE.ShaderMaterial( {
+					uniforms: { U: { type: "t", value: rtTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'init_x_shader' ).textContent,
+
+					depthWrite: false
+				} );
+
+				initBoundaryMaterial = new THREE.ShaderMaterial( {
+					uniforms: { U: { type: "t", value: rtTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'init_boundary_shader' ).textContent,
+
+					depthWrite: false
+				} );
+
+				boundaryMaterial = new THREE.ShaderMaterial( {
+					uniforms: { U: { type: "t", value: rtTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+				} );
+
+				advectionMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: rtTextures[0] },
+								X: { type: "t", value: xTextures[0] }, 
+								fWidth: { type: "f", value: _WIDTH }, 
+								fHeight: { type: "f", value: _HEIGHT },
+								timeStep: { type: "f", value: 0.0 } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'advect_shader' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				diffusionMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: rtTextures[1] },
+								X: { type: "t", value: xTextures[0] }  },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				var forceMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: rtTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				var pressureMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: rtTextures[1] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				var projectionMaterial = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: rtTextures[0] }, P: { type: "t", value: rtTextures[2] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				materialScreen = new THREE.ShaderMaterial( {
+
+					uniforms: { U: { type: "t", value: xTextures[0] } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				//SCENE	
+				boundary = [];
+				boundary.push(new THREE.Mesh( new THREE.PlaneGeometry( 1.1, _HEIGHT ), boundaryMaterial ));
+				boundary[boundary.length-1].position.x = -_WIDTH/2.0;
+				boundary.push(new THREE.Mesh( new THREE.PlaneGeometry( 1.1, _HEIGHT ), boundaryMaterial ));
+				boundary[boundary.length-1].position.x = _WIDTH/2.0;
+				boundary.push(new THREE.Mesh( new THREE.PlaneGeometry( _WIDTH, 1.1 ), boundaryMaterial ));
+				boundary[boundary.length-1].position.y = -_HEIGHT/2.0;
+				boundary.push(new THREE.Mesh( new THREE.PlaneGeometry( _WIDTH, 1.1 ), boundaryMaterial ));
+				boundary[boundary.length-1].position.y = _HEIGHT/2.0;
+	
+				//FULL SCENE
+				quad = new THREE.Mesh( 
+					new THREE.PlaneGeometry( _WIDTH, _HEIGHT ), 
+					initMaterial );
+				quad.position.z = -100;
+				
+				fullScene = new THREE.Scene();
+				fullScene.add(quad);
+				//SCENE
+				innerQuad = new THREE.Mesh( 
+					new THREE.PlaneGeometry( _WIDTH-2, _HEIGHT-2 ), 
+					advectionMaterial);
+				innerQuad.position.z = -100;
+				
+				scene = new THREE.Scene();
+				scene.add(innerQuad);
+
+				for (var i = 0; i < boundary.length; i++) {
+					boundary[boundary.length-1].position.z = -99;
+					scene.add(boundary[i]);
+				};
+
+
+				//
+				camera = new THREE.PerspectiveCamera( 30, _WIDTH / _HEIGHT, 1, 10000 );
+				camera.position.z = 100;
+				//
+				
+				cameraRTT = new THREE.OrthographicCamera( _WIDTH / - 2, _WIDTH / 2, _HEIGHT / 2, _HEIGHT / - 2, -10000, 10000 );
+				cameraRTT.position.z = 100;
+
+/*
+				scene = new THREE.Scene();
+				sceneRTT = new THREE.Scene();
+				sceneScreen = new THREE.Scene();
+
+				var light = new THREE.DirectionalLight( 0xffffff );
+				light.position.set( 0, 0, 1 ).normalize();
+				sceneRTT.add( light );
+
+				light = new THREE.DirectionalLight( 0xffaaaa, 1.5 );
+				light.position.set( 0, 0, -1 ).normalize();
+				sceneRTT.add( light );
+
+				rtTexture = new THREE.WebGLRenderTarget( _WIDTH, _HEIGHT, 
+					{ minFilter: THREE.LinearFilter, magFilter: THREE.NearestFilter, format: THREE.RGBFormat } );
+
+
+
+				material = new THREE.ShaderMaterial( {
+
+					uniforms: { time: { type: "f", value: 0.0 } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_pass_1' ).textContent
+
+				} );
+
+				var materialScreen = new THREE.ShaderMaterial( {
+
+					uniforms: { tDiffuse: { type: "t", value: rtTexture } },
+					vertexShader: document.getElementById( 'vertexShader' ).textContent,
+					fragmentShader: document.getElementById( 'fragment_shader_screen' ).textContent,
+
+					depthWrite: false
+
+				} );
+
+				var plane = new THREE.PlaneGeometry( _WIDTH, _HEIGHT );
+
+				quad = new THREE.Mesh( plane, material );
+				quad.position.z = -100;
+				sceneRTT.add( quad );
+
+				var geometry = new THREE.TorusGeometry( 100, 25, 15, 30 );
+
+				var mat1 = new THREE.MeshPhongMaterial( { color: 0x555555, specular: 0xffaa00, shininess: 5 } );
+				var mat2 = new THREE.MeshPhongMaterial( { color: 0x550000, specular: 0xff2200, shininess: 5 } );
+
+				zmesh1 = new THREE.Mesh( geometry, mat1 );
+				zmesh1.position.set( 0, 0, 100 );
+				zmesh1.scale.set( 1.5, 1.5, 1.5 );
+				sceneRTT.add( zmesh1 );
+
+				zmesh2 = new THREE.Mesh( geometry, mat2 );
+				zmesh2.position.set( 0, 150, 100 );
+				zmesh2.scale.set( 0.75, 0.75, 0.75 );
+				sceneRTT.add( zmesh2 );
+
+				quad = new THREE.Mesh( plane, materialScreen );
+				quad.position.z = -100;
+				sceneScreen.add( quad );
+
+				var n = 5,
+					geometry = new THREE.SphereGeometry( 10, 64, 32 ),
+					material2 = new THREE.MeshBasicMaterial( { color: 0xffffff, map: rtTexture } );
+
+				for( var j = 0; j < n; j ++ ) {
+
+					for( var i = 0; i < n; i ++ ) {
+
+						mesh = new THREE.Mesh( geometry, material2 );
+
+						mesh.position.x = ( i - ( n - 1 ) / 2 ) * 20;
+						mesh.position.y = ( j - ( n - 1 ) / 2 ) * 20;
+						mesh.position.z = 0;
+
+						mesh.rotation.y = - Math.PI / 2;
+
+						scene.add( mesh );
+
+					}
+
+				}*/
+				
+
+				renderer = new THREE.WebGLRenderer();
+				renderer.setSize( _WIDTH, _HEIGHT);// window.innerWidth, window.innerHeight );
+				renderer.autoClear = false;
+
+				container.appendChild( renderer.domElement );
+
+				stats = new Stats();
+				stats.domElement.style.position = 'absolute';
+				stats.domElement.style.top = '0px';
+				container.appendChild( stats.domElement );
+
+				document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+
+				oldTime = Date.now() * 0.0015;
+
+				initialize(xTextures[0],rtTextures[1], rtTextures[0]);
+
+			}
+
+			function onDocumentMouseMove( event ) {
+
+				mouseX = ( event.clientX - windowHalfX );
+				mouseY = ( event.clientY - windowHalfY );
+
+			}
+
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				stats.update();
+
+			}
+
+			function copy(aTex, bTex){
+				quad.material.materialScreen;
+				materialScreen.uniforms.U.value = aTex;
+				renderer.render( fullScene, cameraRTT, bTex, true );
+			}
+			function advect ( xTex, uTex, outTex ){
+				advectionMaterial.uniforms.U.value = uTex;
+				advectionMaterial.uniforms.X.value = xTex;
+				innerQuad.material = advectionMaterial;
+				for(var i = 0; i < boundary.length; i++){
+					boundary[i].material = materialScreen;
+				}
+				renderer.render( scene, cameraRTT, outTex, true );
+			}
+
+			function diffuse ( inTex, outTex ){
+				diffusionMaterial.uniforms.U.value = inTex;
+				renderer.render( scene, cameraRTT, outTex, true );
+			}
+
+			function render() {
+
+				var time = Date.now() * 0.0015;
+
+				advectionMaterial.uniforms.timeStep.value = time - oldTime;
+				oldTime = time;
+
+				/*
+				camera.position.x += ( mouseX - camera.position.x ) * .05;
+				camera.position.y += ( - mouseY - camera.position.y ) * .05;
+
+				camera.lookAt( scene.position );
+
+				if ( zmesh1 && zmesh2 ) {
+
+					zmesh1.rotation.y = - time;
+					zmesh2.rotation.y = - time + Math.PI / 2;
+
+				}
+
+				if ( material.uniforms.time.value > 1 || material.uniforms.time.value < 0 ) {
+
+					delta *= -1;
+
+				}
+
+				material.uniforms.time.value += delta;
+*/
+				//renderer.clear();
+
+				// Render first scene into texture
+
+				//renderer.render( sceneRTT, cameraRTT, rtTexture, true );
+				//renderer.render( initScene, cameraRTT, rtTextures[0], true );
+
+				// Render full screen quad with generated texture
+
+				advect(rtTextures[0],xTextures[0],xTextures[1]);
+				//diffuse(rtTextures[1],rtTextures[0]);
+
+				copy(xTextures[1], xTextures[0]);
+
+				quad.material = materialScreen;
+				materialScreen.uniforms.U.value = xTextures[0];
+				debugMaterial.uniforms.U.value = xTextures[0];
+				renderer.render( fullScene, cameraRTT );
+				//renderer.render( sceneScreen, cameraRTT );
+
+	
+/*
+				renderer.render( initScene, cameraRTT, rtTextures[0], true );
+
+				//advect(rtTextures[0],rtTextures[1]);
+				//diffuse(rtTextures[1],rtTextures[0]);
+				//force(rtTextures[0],rtTextures[2]);
+				//pressure(rtTextures[2],rtTextures[1]);
+				//project(rtTextures[2],rtTextures[1],rtTextures[0]);
+*/
+			}
+				
+
+		</script>
+	</body>
+</html>
