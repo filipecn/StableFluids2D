@@ -23,7 +23,9 @@
 		<div id="container"></div>
 
 		<script src="js/Detector.js"></script>
-		<script src="three.min.js"></script>
+		<script src="js/KeyboardState.js"></script>
+		<!--<script src="three.min.js"></script>-->
+		<script src="http://www.clicktorelease.com/code/spherical-normal-mapping/js/Three.js.pagespeed.jm.EHRYmpML6O.js"></script>
 
 		<script>
 
@@ -31,11 +33,19 @@
 
 			if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
 
+			var keyboard = new KeyboardState();
+			var mouse = { x: 0, y: 0 };
+			var old_mouse = { x: 0, y: 0 };
+			var mouse_down = false;
+			var dens_mode = true;
+
 			var container, camera, renderer;
 			var scene;
 
+			var gridMesh, uVectors;
+
 			//CONSTANTS
-			var N = 5;
+			var N = 8;
 			var size = (N+2)*(N+2);
 			var h = 1/N;
 			var dt = 0.1;
@@ -91,7 +101,7 @@
 					for(var i = 1; i <= N; i++)
 						for (var j = 1; j <= N; j++) 
 							x[IX(i,j)] = (x0[IX(i,j)] + a*(x[IX(i-1,j)]+x[IX(i+1,j)]+x[IX(i,j-1)]+x[IX(i,j+1)]))/c;
-					set_bnd ( N, b, x );
+					set_bnd ( b, x );
 				}
 			}
 
@@ -116,7 +126,7 @@
 							d[IX(i,j)] = s0*(t0*d0[IX(i0,j0)]+t1*d0[IX(i0,j1)])+
 										 s1*(t0*d0[IX(i1,j0)]+t1*d0[IX(i1,j1)]);
 						}
-				set_bnd ( N, b, d );
+				set_bnd ( b, d );
 			}
 
 			function project ( u, v, p, div )
@@ -126,7 +136,7 @@
 							div[IX(i,j)] = -0.5*(u[IX(i+1,j)]-u[IX(i-1,j)]+v[IX(i,j+1)]-v[IX(i,j-1)])/N;
 							p[IX(i,j)] = 0;
 						}	
-				set_bnd ( N, 0, div ); set_bnd ( N, 0, p );
+				set_bnd ( 0, div ); set_bnd ( 0, p );
 
 				lin_solve ( 0, p, div, 1, 4 );
 
@@ -135,35 +145,51 @@
 						u[IX(i,j)] -= 0.5*N*(p[IX(i+1,j)]-p[IX(i-1,j)]);
 						v[IX(i,j)] -= 0.5*N*(p[IX(i,j+1)]-p[IX(i,j-1)]);
 					}
-				set_bnd ( N, 1, u ); set_bnd ( N, 2, v );
+				set_bnd ( 1, u ); set_bnd ( 2, v );
 			}
 
 			function dens_step ( x, x0, u, v )
 			{
-				add_source ( N, x, x0, dt );
-				swap ( x0, x ); diffuse ( N, 0, x, x0, diff, dt );
-				swap ( x0, x ); advect ( N, 0, x, x0, u, v, dt );
+				add_source ( x, x0 );
+				swap ( x0, x ); diffuse ( 0, x, x0 );
+				swap ( x0, x ); advect ( 0, x, x0, u, v );
 			}
 
 			function vel_step ( u, v, u0, v0 )
 			{
-				add_source ( N, u, u0, dt ); add_source ( N, v, v0, dt );
-				swap ( u0, u ); diffuse ( N, 1, u, u0, visc, dt );
-				swap ( v0, v ); diffuse ( N, 2, v, v0, visc, dt );
-				project ( N, u, v, u0, v0 );
+				add_source ( u, u0 ); add_source ( v, v0 );
+				swap ( u0, u ); diffuse ( 1, u, u0 );
+				swap ( v0, v ); diffuse ( 2, v, v0 );
+				project ( u, v, u0, v0 );
 				swap ( u0, u ); swap ( v0, v );
-				advect ( N, 1, u, u0, u0, v0, dt ); advect ( N, 2, v, v0, u0, v0, dt );
-				project ( N, u, v, u0, v0 );
+				advect ( 1, u, u0, u0, v0 ); advect ( 2, v, v0, u0, v0 );
+				project ( u, v, u0, v0 );
 			}
 			
 			init();
-			//animate();
+			animate();
 
 			function init() {
+
+				var t = [];
+				t.push({v:2,u:1});
+				t.push({v:22,u:12});
+				var tt = [];
+				tt.push({v:200,u:100});
+				tt.push({v:2200,u:1200});
+				console.log(t[0].v + " " + t[1].u);
+				console.log(tt[0].v + " " + tt[1].u);
+
+				swap(t, tt);
+	
+				console.log(t[0].v + " " + t[1].u);
+				console.log(tt[0].v + " " + tt[1].u);
+
+				
+				
 				container = document.getElementById( 'container' );
 
-				camera = new THREE.OrthographicCamera( 0, 1, 0, 1, -1, 1 );
-				camera.position.z = 1;
+				camera = new THREE.OrthographicCamera( 0, 1, 1, 0, -100000, 100000 );
 
 				renderer = new THREE.WebGLRenderer();
 				renderer.setSize( window.innerWidth, window.innerHeight );
@@ -171,6 +197,9 @@
 
 				container.appendChild( renderer.domElement );
 
+				projector = new THREE.Projector();
+				document.addEventListener( 'mousedown', onDocumentMouseDown, false );
+				document.addEventListener( 'mouseup', onDocumentMouseUp, false );
 				document.addEventListener( 'mousemove', onDocumentMouseMove, false );
 
 				clear_data();
@@ -178,45 +207,226 @@
 				//SCENE
 				scene = new THREE.Scene();
 
-				for(var i = 1; i <= N; i++)
-					for(var j = 1; j <= N; j++){
-						var particle = new THREE.Particle( new THREE.ParticleCanvasMaterial( { color: 0x666666 } ) );
-    					particle.position.x = (i-0.5)*h;
-    					particle.position.y = (j-0.5)*h;
-    					particle.scale.x = particle.scale.y = 1;
-    					console.log(particle.position.x + " " + particle.position.y);
-    					particle.position.z = 0;
-    					scene.add(particle);
+				var material = new THREE.MeshBasicMaterial( 
+				{ color: 0xffffff, vertexColors: THREE.VertexColors, side: THREE.DoubleSide/*, wireframe: true*/ } );
+
+				var gridGeometry=new THREE.Geometry();
+				for (var j = 0; j <= N+2; j++)
+					for (var i = 0; i <= N + 2; i++)
+					{
+
+						gridGeometry.vertices.push(new THREE.Vector3(i/(N) - h,j/(N) - h,-10));
 					}
+				
+				for(var j = 0; j < N + 2; j++)
+					for(var i = 0; i < N + 2; i++)
+					{
+						//console.log(i + "," + j);
+						var offset = j*(N+3) + i;
+						gridGeometry.faces.push(new THREE.Face4(offset,offset+1,offset + N+4, offset + N+3));
+						/*console.log(offset + " " + (offset+1) + " " + (offset + N+4) + " " + (offset + N+3));
+						console.log(gridGeometry.vertices[gridGeometry.faces[gridGeometry.faces.length-1].a]);
+						console.log(gridGeometry.vertices[gridGeometry.faces[gridGeometry.faces.length-1].b]);
+						console.log(gridGeometry.vertices[gridGeometry.faces[gridGeometry.faces.length-1].c]);
+						console.log(gridGeometry.vertices[gridGeometry.faces[gridGeometry.faces.length-1].d]);
+					*/
+					}
+				for ( var i = 0; i < gridGeometry.faces.length; i++ ) 
+					for(var v = 0; v < 4; v++)	
+						gridGeometry.faces[ i ].vertexColors[ v ] = new THREE.Color( 0x000000 );
 
+				gridMesh=new THREE.Mesh(gridGeometry,material);
+				scene.add(gridMesh);
 
+				for ( var k = 0; k < gridMesh.geometry.faces.length; k++ ){ 
+					var g = new THREE.Geometry();
+				//	console.log(k);
+					g.vertices.push(new THREE.Vector3(
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].a].x, 
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].a].y, 1));
+				//	console.log(g.vertices[g.vertices.length-1]);
+					g.vertices.push(new THREE.Vector3(
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].b].x, 
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].b].y, 1));
+				//	console.log(g.vertices[g.vertices.length-1]);
+					g.vertices.push(new THREE.Vector3(
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].c].x, 
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].c].y, 1));
+				//	console.log(g.vertices[g.vertices.length-1]);
+					g.vertices.push(new THREE.Vector3(
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].d].x, 
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].d].y, 1));
+				//	console.log(g.vertices[g.vertices.length-1]);
+					g.vertices.push(new THREE.Vector3(
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].a].x, 
+						gridMesh.geometry.vertices[gridMesh.geometry.faces[ k ].a].y, 1));
+				//	console.log(g.vertices[g.vertices.length-1]);
+					var c = 0xffffff;//0x000000 + 0x000005*k;
+					var line = new THREE.Line(g, new THREE.LineBasicMaterial({
+				        color: c
+				    }));
+
+				    scene.add(line);	
+				}
+
+				uVectors = [];
+				k = 0;
+				for(var j = 0; j < N + 2; j++)
+						for(var i = 0; i < N + 2; i++){
+							var u_geometry = new THREE.Geometry();
+							var offset_i = (i-1)/N + 0.5/N;
+							var offset_j = (j-1)/N + 0.5/N;
+							if(j > 0 && i > 0 && i < N + 1 && j < N + 1){
+								k++;
+								u_geometry.vertices.push(new THREE.Vector3(offset_i,offset_j,1));
+								u_geometry.vertices.push(new THREE.Vector3(offset_i+0.3/N,offset_j+0.3/N,1));
+							}
+							else{
+								u_geometry.vertices.push(new THREE.Vector3(0,0,1));
+								u_geometry.vertices.push(new THREE.Vector3(0,0,1));	
+							}
+							//u_geometry.verticesNeedUpdate = true;
+							var c = 0x00FF00;// + 0x000005*k;
+							uVectors.push(new THREE.Line(u_geometry, new THREE.LineBasicMaterial({color: c})));
+							scene.add(uVectors[uVectors.length-1]);
+						}
 			}
 
-			function onDocumentMouseMove( event ) {
 			
-			}
 
 			function animate() {
 
 				requestAnimationFrame( animate );
 
 				render();
+				update();
 			}
 
+			
 
-			function drawGrid(){
+			function draw_density ()
+			{
+				var x, y, h;
 
+				h = 1.0/N;
+
+				for ( i=0 ; i<=N ; i++ ){
+					//x = (i-0.5)*h;
+					for ( j=0 ; j<=N ; j++ ) {
+					//	y = (j-0.5)*h;
+					//	console.log(x + " " + y);
+				//	}
+				//}
+				//for ( var k = 0; k < gridMesh.geometry.faces.length; k++ ){ 
+				//	var j = Math.floor(k / N);
+				//	var i = k - j*N;
+					if(i == 0 || i > N || j == 0 || j > N) 
+						continue;
+					//console.log(i + " " + j);
+					var d00 = dens[IX(i,j)];
+					var d01 = dens[IX(i,j+1)];
+					var d10 = dens[IX(i+1,j)];
+					var d11 = dens[IX(i+1,j+1)];
+					//console.log("CLICK " + IX(i,j));
+					gridMesh.geometry.faces[ IX(i,j) ].vertexColors[ 0 ].setRGB( d00, d00, d00 );
+					gridMesh.geometry.faces[ IX(i,j) ].vertexColors[ 1 ].setRGB( d10, d10, d10 );
+					gridMesh.geometry.faces[ IX(i,j) ].vertexColors[ 2 ].setRGB( d11, d11, d11 );
+					gridMesh.geometry.faces[ IX(i,j) ].vertexColors[ 3 ].setRGB( d01, d01, d01 ); 
+				}
+			}
+				gridMesh.geometry.colorsNeedUpdate = true;
 			}
 
+			function get_from_UI ( d, u, v )
+			{
+				var size = (N+2)*(N+2);
+				var i, j;
+
+				for (i=0 ; i<size ; i++ ) {
+					u[i] = v[i] = d[i] = 0.0;
+				}
+
+				//console.log(mouse_down + " " + dens_mode);
+				if ( !mouse_down ) return;
+				//console.log(old_mouse.x + " " + old_mouse.y);
+				i = Math.floor(mouse.x*N+1);
+				j = Math.floor(mouse.y*N+1);
+				
+				if ( i<1 || i>N || j<1 || j>N ) return;
+
+				//console.log(i + " " + j);
+
+				if ( !dens_mode ) {
+					//console.log(IX(i,j));
+					u[IX(i,j)] = force * (mouse.x-old_mouse.x)*window.innerWidth;
+					v[IX(i,j)] = force * (mouse.y-old_mouse.y)*window.innerHeight;
+
+					//console.log(u[IX(i,j)] + " " + v[IX(i,j)]);
+					//uVectors[IX(i,j)].geometry.vertices[1].x = uVectors[IX(i,j)].geometry.vertices[0].x + u[IX(i,j)];
+					//uVectors[IX(i,j)].geometry.vertices[1].y = uVectors[IX(i,j)].geometry.vertices[0].y + v[IX(i,j)];
+					//uVectors[IX(i,j)].geometry.verticesNeedUpdate = true; 
+				}
+
+				if ( dens_mode ) {
+					d[IX(i,j)] = source;
+				}
+
+				old_mouse.x = mouse.x;
+				old_mouse.y = mouse.y;
+
+			}
 
 			function render() {
-				//get_from_UI ( dens_prev, u_prev, v_prev );
+				get_from_UI ( dens_prev, U_prev, V_prev );
 				vel_step ( U, V, U_prev, V_prev );
 				dens_step ( dens, dens_prev, U, V );
 
+				draw_density();
+
+				var size = (N+2)*(N+2);
+				var i, j;
+				for (i=0 ; i<size ; i++ ) {
+					uVectors[i].geometry.vertices[1].x = uVectors[i].geometry.vertices[0].x + U[i];
+					uVectors[i].geometry.vertices[1].y = uVectors[i].geometry.vertices[0].y + V[i];
+					uVectors[i].geometry.verticesNeedUpdate = true;
+				}
+
 				renderer.render( scene, camera );
 			}
+
+			function onDocumentMouseMove( event ) {
+				mouse.x = ( event.clientX / window.innerWidth );
+				mouse.y =  - ( event.clientY / window.innerHeight ) + 1;
+				//console.log(mouse);
+			}
+
+			function onDocumentMouseDown( event ) 
+			{
+				old_mouse.x = mouse.x = ( event.clientX / window.innerWidth );
+				old_mouse.y = mouse.y = - ( event.clientY / window.innerHeight ) + 1;
 				
+				mouse_down = true;
+
+				//console.log(mouse_down);
+			}		
+
+			function onDocumentMouseUp( event ) 
+			{
+				mouse_down = false;
+				draw_density();
+
+				//console.log(mouse_down);
+			}		
+
+			function update()
+			{
+				keyboard.update();
+				if ( keyboard.down("left") )
+					dens_mode = !dens_mode;
+				//console.log(dens_mode);
+
+			}
+
 		</script>
 	</body>
 </html>
